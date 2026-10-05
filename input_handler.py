@@ -12,6 +12,15 @@ class KeyReader:
         self._thread = threading.Thread(target=self._reader, daemon=True)
         self._thread.start()
     
+    def __enter__(self):
+        """Поддержка контекстного менеджера."""
+        return self
+    
+    def __exit__(self, exc_type, exc_val, exc_tb):
+        """Корректное завершение потока при выходе."""
+        self.stop()
+        return False
+    
     def _reader(self):
         if sys.platform == "win32":
             import msvcrt
@@ -27,7 +36,11 @@ class KeyReader:
             import tty
             import termios
             fd = sys.stdin.fileno()
-            old = termios.tcgetattr(fd)
+            try:
+                old = termios.tcgetattr(fd)
+            except termios.error:
+                # stdin не терминал (например, при запуске через cron или пайп)
+                return
             try:
                 tty.setcbreak(fd)
                 while not self._stop.is_set():
