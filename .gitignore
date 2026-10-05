@@ -1,0 +1,12 @@
+# Секреты
+.env
+*.secret
+
+# Python
+__pycache__/
+*.pyc
+venv/
+.venv/
+
+# Результаты
+events_output.json
