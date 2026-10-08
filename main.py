@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 import os
 import sys
+import json
 import yaml
 import time
 import argparse
@@ -110,80 +111,109 @@ def run_ui_mode(config: dict):
             
     print(f"\n✅ Готово! Событий найдено: {state.events_found}")
 
-
 def show_status(config: dict):
-    """Выводит текущую статистику фонового процесса без его остановки."""
+    """Выводит текущую статистику фонового процесса."""
     from rich.console import Console
     from rich.panel import Panel
     from rich.table import Table
     from rich.text import Text
-    import os
+    from rich.layout import Layout
+    import subprocess
 
     console = Console()
-    console.print("[bold cyan]📊 Статус VK Events Agent (Фоновый режим)[/]\n")
+    console.print("[bold cyan]📊 Статус VK Events Agent[/]\n")
 
-    # 1. Проверяем, запущен ли процесс
-    import subprocess
+    # Проверяем процесс
     result = subprocess.run(['pgrep', '-f', 'main.py'], capture_output=True, text=True)
-    pids = result.stdout.strip().split('\n')
-    pids = [p for p in pids if p] # убираем пустые
+    pids = [p for p in result.stdout.strip().split('\n') if p]
     
-    if not pids:
-        console.print("[bold red]❌ Процесс НЕ запущен в фоне.[/]\n")
-    else:
+    if pids:
         console.print(f"[bold green]✅ Процесс запущен (PID: {', '.join(pids)})[/]\n")
-
-    # 2. Читаем состояние из файлов
-    state_file = "processed_posts.json"
-    output_file = config.get("output_file", "events_output.json")
-    log_file = "logs/parser.log"
+    else:
+        console.print("[bold yellow]⚠️  Процесс не запущен (показываем последнюю статистику)[/]\n")
 
     layout = Layout()
     layout.split_column(
-        Layout(name="stats", size=10),
-        Layout(name="recent", size=12),
+        Layout(name="ai_stats", size=12),
+        Layout(name="parse_stats", size=8),
+        Layout(name="recent", size=10),
         Layout(name="logs", size=6)
     )
 
-    # --- Блок статистики ---
-    stats_table = Table.grid(expand=True, padding=(0, 2))
-    stats_table.add_column("Параметр", style="cyan", width=25)
-    stats_table.add_column("Значение", style="white")
+    # --- Статистика ИИ ---
+    ai_table = Table.grid(expand=True, padding=(0, 2))
+    ai_table.add_column("Параметр", style="cyan", width=30)
+    ai_table.add_column("Значение", style="white")
     
     try:
-        with open(state_file, "r", encoding="utf-8") as f:
-            state = json.load(f)
-            groups_processed = len(state)
-            total_posts = sum(len(posts) for posts in state.values())
-            stats_table.add_row("Групп обработано:", str(groups_processed))
-            stats_table.add_row("Постов проверено:", str(total_posts))
+        with open("stats.json", "r", encoding="utf-8") as f:
+            data = json.load(f)
+            ai_stats = data.get("ai_stats", {})
+            
+            ai_table.add_row("Провайдер:", f"[bold]{ai_stats.get('provider', '?').upper()}[/]")
+            ai_table.add_row("Модель:", ai_stats.get('model', '?'))
+            ai_table.add_row("Всего вызовов ИИ:", str(ai_stats.get('total_calls', 0)))
+            ai_table.add_row("Успешных:", f"[green]{ai_stats.get('successful_calls', 0)}[/]")
+            ai_table.add_row("Ошибок:", f"[red]{ai_stats.get('failed_calls', 0)}[/]")
+            ai_table.add_row("Fallback (regex):", f"[yellow]{ai_stats.get('fallback_calls', 0)}[/]")
+            ai_table.add_row("Среднее время ответа:", f"{ai_stats.get('avg_response_time', 0):.2f}s")
+            ai_table.add_row("Событий через ИИ:", f"[bold green]{ai_stats.get('events_found_via_ai', 0)}[/]")
+            ai_table.add_row("Событий через fallback:", f"[yellow]{ai_stats.get('events_found_via_fallback', 0)}[/]")
     except FileNotFoundError:
-        stats_table.add_row("Состояние:", "Файл состояния не найден (возможно, первый запуск)")
+        ai_table.add_row("Статистика:", "Файл stats.json не найден (запустите агент)")
 
-    layout["stats"].update(Panel(stats_table, title="📈 Прогресс", border_style="blue"))
+    layout["ai_stats"].update(Panel(ai_table, title="🤖 Статистика работы ИИ", border_style="magenta"))
 
-    # --- Блок последних событий ---
+    # --- Статистика парсинга ---
+    parse_table = Table.grid(expand=True, padding=(0, 2))
+    parse_table.add_column("Параметр", style="cyan", width=30)
+    parse_table.add_column("Значение", style="white")
+    
+    try:
+        with open("stats.json", "r", encoding="utf-8") as f:
+            data = json.load(f)
+            parse_stats = data.get("parse_stats", {})
+            
+            parse_table.add_row("Групп обработано:", f"{parse_stats.get('done_groups', 0)} / {parse_stats.get('total_groups', 0)}")
+            parse_table.add_row("Постов проверено:", str(parse_stats.get('done_posts', 0)))
+            parse_table.add_row("Всего событий найдено:", f"[bold green]{parse_stats.get('events_found', 0)}[/]")
+            parse_table.add_row("Ошибок:", f"[red]{parse_stats.get('errors', 0)}[/]")
+            parse_table.add_row("Завершено:", data.get('completed_at', '?'))
+    except FileNotFoundError:
+        parse_table.add_row("Статистика:", "Нет данных")
+
+    layout["parse_stats"].update(Panel(parse_table, title="📈 Статистика парсинга", border_style="blue"))
+
+    # --- Последние события ---
     events_table = Table(expand=True, show_lines=False)
     events_table.add_column("Дата", style="cyan", width=12)
+    events_table.add_column("Время", style="cyan", width=8)
     events_table.add_column("Мероприятие", style="bold white")
+    events_table.add_column("Место", style="blue")
     events_table.add_column("Цена", style="yellow", justify="right")
     
     try:
-        with open(output_file, "r", encoding="utf-8") as f:
+        with open(config.get("output_file", "events_output.json"), "r", encoding="utf-8") as f:
             data = json.load(f)
-            events = data.get("events", [])[-5:] # Берем последние 5
+            events = data.get("events", [])[-5:]
             for ev in reversed(events):
                 price = f"{ev.get('price_fixed')}₽" if ev.get('price_fixed') else (f"от {ev.get('price_from')}₽" if ev.get('price_from') else "—")
-                events_table.add_row(ev.get('date', '?'), ev.get('name', '?')[:40], price)
+                events_table.add_row(
+                    ev.get('date', '?'),
+                    ev.get('time', '—'),
+                    ev.get('name', '?')[:35],
+                    (ev.get('location', '—') or '—')[:15],
+                    price
+                )
     except FileNotFoundError:
-        events_table.add_row("—", "Событий пока не найдено", "—")
+        events_table.add_row("—", "—", "Событий пока не найдено", "—", "—")
         
     layout["recent"].update(Panel(events_table, title="🎯 Последние 5 событий", border_style="green"))
 
-    # --- Блок логов ---
+    # --- Логи ---
     logs_text = Text()
     try:
-        with open(log_file, "r", encoding="utf-8") as f:
+        with open("logs/parser.log", "r", encoding="utf-8") as f:
             lines = f.readlines()
             last_lines = lines[-6:] if len(lines) >= 6 else lines
             logs_text = Text("".join(last_lines), style="dim")
@@ -193,14 +223,15 @@ def show_status(config: dict):
     layout["logs"].update(Panel(logs_text, title="📝 Последние строки лога", border_style="yellow"))
 
     console.print(layout)
-    console.print("\n[dim]💡 Совет: Чтобы свернуть интерактивный режим, нажмите Ctrl+Z, затем введите 'bg'.[/]")
-    console.print("[dim]💡 Чтобы вернуть его обратно, введите 'fg'.[/]\n")
-
-
+    console.print("\n[dim]💡 Команды:[/]")
+    console.print("[dim]   • Свернуть интерактивный режим: Ctrl+Z → bg[/]")
+    console.print("[dim]   • Развернуть обратно: fg[/]")
+    console.print("[dim]   • Подробные логи: tail -f logs/parser.log[/]\n")
 
 def main():
     parser_arg = argparse.ArgumentParser(description="VK Events Parser Agent")
     parser_arg.add_argument("--daemon", action="store_true", help="Запуск в фоновом режиме без UI")
+    parser_arg.add_argument("--status", action="store_true", help="Показать статистику фонового процесса")  # ← ДОБАВЬТЕ ЭТУ СТРОКУ
     args = parser_arg.parse_args()
     
     config = load_config()

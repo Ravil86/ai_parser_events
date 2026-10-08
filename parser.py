@@ -4,7 +4,7 @@ import threading
 from pathlib import Path
 from dataclasses import dataclass, field
 from typing import Optional
-
+from datetime import datetime
 from models import Event
 from vk_client import fetch_posts, extract_post_content, post_date_str
 from ai_extractor import AIExtractor
@@ -151,6 +151,27 @@ class Parser(threading.Thread):
             logger.info("=== Парсинг завершён успешно ===")
         else:
             logger.info("=== Парсинг остановлен пользователем ===")
+
+         # Сохраняем статистику ИИ
+        ai_stats = self.ai.get_stats_summary()
+        stats_file = "stats.json"
+        try:
+            with open(stats_file, "w", encoding="utf-8") as f:
+                json.dump({
+                    "ai_stats": ai_stats,
+                    "parse_stats": {
+                        "total_groups": self.state.total_groups,
+                        "done_groups": self.state.done_groups,
+                        "total_posts": self.state.total_posts,
+                        "done_posts": self.state.done_posts,
+                        "events_found": self.state.events_found,
+                        "errors": self.state.errors,
+                    },
+                    "completed_at": datetime.now().isoformat(),
+                }, f, ensure_ascii=False, indent=2)
+            logger.info(f"📈 Статистика сохранена в {stats_file}")
+        except Exception as e:
+            logger.error(f"Ошибка сохранения статистики: {e}")
         self._save()
 
     def _process_group(self, category: str, group_name: str, urls: list[str]):
@@ -161,7 +182,6 @@ class Parser(threading.Thread):
             return
 
         
-
         logger.info(f"  [{group_name}] Загрузка постов...")
         posts = fetch_posts(vk_url, self.vk_token, count=self.posts_per_group)
         self.state.total_posts += len(posts)
@@ -227,17 +247,28 @@ class Parser(threading.Thread):
                 self.state.last_events.append(event)
                 if len(self.state.last_events) > 10:
                     self.state.last_events.pop(0)
-                
+
                 logger.info(f"    + Найдено: '{event.name}' ({event.date} {event.time or ''})")
                 processed_count += 1
 
+        # Подробная статистика по группе
+        total_processed = len([p for p in posts if f"{owner_id}_{p.get('id')}" in self.processed_posts[group_key]])
+        skipped_short = len([p for p in posts if not extract_post_content(p)["text"] or len(extract_post_content(p)["text"].strip()) < 30])
+        
+        logger.info(f"  📊 [{group_name}] Статистика:")
+        logger.info(f"     • Постов загружено: {len(posts)}")
+        logger.info(f"     • Обработано новых: {total_processed}")
+        logger.info(f"     • Пропущено (короткие): {skipped_short}")
+        logger.info(f"     • Найдено событий: {processed_count}")
+
         if processed_count > 0:
            # Выносим сложную логику из f-string, чтобы избежать SyntaxError
-            new_posts_count = len([
-                p for p in posts 
-                if f"{owner_id}_{p.get('id')}" in self.processed_posts[group_key]
-            ])
-            logger.info(f"  [{group_name}] Обработано новых постов: {new_posts_count}, найдено событий: {processed_count}")
+           logger.info(f"  ✅ [{group_name}] Успешно обработано")
+            # new_posts_count = len([
+            #     p for p in posts 
+            #     if f"{owner_id}_{p.get('id')}" in self.processed_posts[group_key]
+            # ])
+            # logger.info(f"  [{group_name}] Обработано новых постов: {new_posts_count}, найдено событий: {processed_count}")
         else:
             logger.info(f"  [{group_name}] Новых событий не найдено.")
 
