@@ -1,173 +1,307 @@
-import os
 import json
+import re
 import requests
 from typing import Optional
+from datetime import datetime, timedelta
 
-SYSTEM_PROMPT = """Ты — ассистент для извлечения информации о мероприятиях из текста постов.
-Твоя задача — извлечь из текста поста структурированные данные в формате JSON.
+SYSTEM_PROMPT = """Ты — ассистент для извлечения информации о мероприятиях из постов VK.
+В одном посте может быть ОДНО или НЕСКОЛЬКО мероприятий (список игр).
 
-Поля:
-- "name": краткое название мероприятия (на русском)
-- "date": дата проведения (формат YYYY-MM-DD). Если в тексте нет явной даты — "уточняйте"
-- "price_from": минимальная цена в рублях (число), если есть "от N руб". Иначе null.
-- "price_fixed": фиксированная цена в рублях (число), если цена фиксирована. Иначе null.
-- "description": 1-2 предложения о мероприятии.
+Верни JSON вида:
+{
+  "events": [
+    {
+      "name": "название",
+      "date": "YYYY-MM-DD",
+      "time": "19:00" или null,
+      "location": "название места" или null,
+      "price_from": число или null,
+      "price_fixed": число или null,
+      "description": "1-2 предложения"
+    }
+  ]
+}
 
-Если в посте вообще нет анонса мероприятия (это реклама, новость, опрос и т.п.) — верни {"skip": true}.
-ВАЖНО: возвращай ТОЛЬКО валидный JSON, без комментариев, markdown-обёртки и пояснений."""
+Если в посте нет анонсов — {"events": []}.
+Если нет года — используй текущий. Относительные даты ("завтра") — тоже текущий год.
+"600 р.с человека" = price_from: 600. "Стоимость: 600р" = price_from: 600.
+ТОЛЬКО валидный JSON без markdown."""
 
+FEW_SHOT_EXAMPLES = """
+Пример 1 (пост с одной игрой):
+Ввод: 🗓 08 сентября | 19:00\n📍 STING\n💰 600р с игрока.\n💥Туц Туц QUIZ
+Вывод: {"events": [{"name": "Туц Туц QUIZ", "date": "2026-09-08", "time": "19:00", "location": "STING", "price_from": 600}]}
+
+Пример 2 (список игр):
+Ввод: 👉1 октября, четверг\nПланета, 19:00\n💥Туц Туц\n👉4 октября\nChester Pub, 17:00\n✨Мозгобойня
+Вывод: {"events": [
+  {"name": "Туц Туц", "date": "2026-10-01", "time": "19:00", "location": "Планета"},
+  {"name": "Мозгобойня", "date": "2026-10-04", "time": "17:00", "location": "Chester Pub"}
+]}
+
+Пример 3
+Ввод: 📍29 октября , ЧЕТВЕРГ\n📍Harat’s pub\n📍сбор в 19:00 , в 19.15 начинаем отвечать на вопросы\n\nРегистрируйтесь:\n📎в комментариях под этим постом.\nСтоимость участия - 600 р.с человека.
+Вывод: {"events": [{"name": "Квиз Эйнштейн Party | ХАНТЫ-МАНСИЙСК |", "date": "2026-09-29", "time": "19:00", "location": "Harat’s pub", "price_from": 600}]}
+"""
 
 class AIExtractor:
-    """Класс для извлечения данных через бесплатные LLM"""
-    
     def __init__(self, provider: str, api_key: str = "", model: str = ""):
         self.provider = provider.lower()
         self.api_key = api_key
         self.model = model
         self.session = requests.Session()
-    
-    def extract(self, text: str) -> Optional[dict]:
-        """Отправляет текст в ИИ и парсит ответ"""
+
+    def extract(self, text: str) -> list[dict]:
+        """Возвращает список событий из поста (может быть 0, 1 или несколько)."""
         if not text or len(text.strip()) < 20:
-            return None
-        
-        # Убираем HTML-теги
-        import re
+            return []
         text = re.sub(r'<[^>]+>', '', text)
-        
-        if self.provider == "groq":
-            return self._call_groq(text)
-        elif self.provider == "openrouter":
-            return self._call_openrouter(text)
-        elif self.provider == "ollama":
-            return self._call_ollama(text)
-        else:
-            # Fallback — простой regex-парсер без ИИ
-            return self._fallback_parse(text)
-    
-    def _call_groq(self, text: str) -> Optional[dict]:
-        url = "https://api.groq.com/openai/v1/chat/completions"
-        headers = {
-            "Authorization": f"Bearer {self.api_key}",
-            "Content-Type": "application/json",
-        }
-        payload = {
-            "model": self.model or "llama-3.3-70b-versatile",
-            "messages": [
-                {"role": "system", "content": SYSTEM_PROMPT},
-                {"role": "user", "content": text[:4000]},
-            ],
-            "temperature": 0.1,
-            "max_tokens": 500,
-            "response_format": {"type": "json_object"},
-        }
+
         try:
-            r = self.session.post(url, json=payload, headers=headers, timeout=30)
-            r.raise_for_status()
-            content = r.json()["choices"][0]["message"]["content"]
-            return json.loads(content)
+            if self.provider == "groq":
+                result = self._call_groq(text)
+            elif self.provider == "openrouter":
+                result = self._call_openrouter(text)
+            elif self.provider == "ollama":
+                result = self._call_ollama(text)
+            elif self.provider == "qwen":
+                result = self._call_qwen(text)
+            else:
+                result = None
+            if result and isinstance(result, dict):
+                return result.get("events", []) if "events" in result else ([result] if not result.get("skip") else [])
         except Exception as e:
-            print(f"  ⚠ Groq error: {e}")
-            return self._fallback_parse(text)
-    
-    def _call_openrouter(self, text: str) -> Optional[dict]:
-        url = "https://openrouter.ai/api/v1/chat/completions"
-        headers = {
-            "Authorization": f"Bearer {self.api_key}",
-            "Content-Type": "application/json",
-        }
-        payload = {
-            "model": self.model or "google/gemini-2.0-flash-exp:free",
-            "messages": [
-                {"role": "system", "content": SYSTEM_PROMPT},
-                {"role": "user", "content": text[:4000]},
-            ],
-            "temperature": 0.1,
-        }
-        try:
-            r = self.session.post(url, json=payload, headers=headers, timeout=45)
-            r.raise_for_status()
-            content = r.json()["choices"][0]["message"]["content"]
-            # OpenRouter не всегда возвращает JSON-объект
-            content = content.strip().strip("`")
-            if content.startswith("json"):
-                content = content[4:].strip()
-            return json.loads(content)
-        except Exception as e:
-            print(f"  ⚠ OpenRouter error: {e}")
-            return self._fallback_parse(text)
-    
-    def _call_ollama(self, text: str) -> Optional[dict]:
-        url = "http://localhost:11434/api/chat"
-        payload = {
+            print(f"[AI] {self.provider} error: {e}")
+
+        return self._fallback(text)
+
+    def _call_groq(self, text: str) -> dict:
+        r = self.session.post("https://api.groq.com/openai/v1/chat/completions",
+            headers={"Authorization": f"Bearer {self.api_key}"},
+            json={
+                "model": self.model or "llama-3.3-70b-versatile",
+                "messages": [
+                    {"role": "system", "content": SYSTEM_PROMPT},
+                    {"role": "user", "content": FEW_SHOT_EXAMPLES + "\n\nТеперь обработай:\n" + text[:4000]},
+                ],
+                "temperature": 0.1,
+                "max_tokens": 1000,
+                "response_format": {"type": "json_object"},
+            }, timeout=30)
+        r.raise_for_status()
+        return json.loads(r.json()["choices"][0]["message"]["content"])
+
+    def _call_openrouter(self, text: str) -> dict:
+        r = self.session.post("https://openrouter.ai/api/v1/chat/completions",
+            headers={"Authorization": f"Bearer {self.api_key}"},
+            json={
+                "model": self.model or "google/gemini-2.0-flash-exp:free",
+                "messages": [
+                    {"role": "system", "content": SYSTEM_PROMPT},
+                    {"role": "user", "content": FEW_SHOT_EXAMPLES + "\n\nТеперь обработай:\n" + text[:4000]},
+                ],
+                "temperature": 0.1,
+            }, timeout=45)
+        r.raise_for_status()
+        content = r.json()["choices"][0]["message"]["content"].strip().strip("`")
+        if content.startswith("json"):
+            content = content[4:].strip()
+        return json.loads(content)
+
+    def _call_ollama(self, text: str) -> dict:
+        r = self.session.post("http://localhost:11434/api/chat", json={
             "model": self.model or "llama3.1:8b",
             "messages": [
                 {"role": "system", "content": SYSTEM_PROMPT},
-                {"role": "user", "content": text[:4000]},
+                {"role": "user", "content": FEW_SHOT_EXAMPLES + "\n\nТеперь обработай:\n" + text[:4000]},
             ],
-            "stream": False,
-            "format": "json",
+            "stream": False, "format": "json",
+        }, timeout=120)
+        r.raise_for_status()
+        return json.loads(r.json()["message"]["content"])
+
+    def _call_qwen(self, text: str) -> dict:
+        """Qwen через DashScope API (Alibaba Cloud) — OpenAI-compatible."""
+        r = self.session.post("https://dashscope.aliyuncs.com/compatible-mode/v1/chat/completions",
+            headers={
+                "Authorization": f"Bearer {self.api_key}",
+                "Content-Type": "application/json",
+            },
+            json={
+                "model": self.model or "qwen-plus",
+                "messages": [
+                    {"role": "system", "content": SYSTEM_PROMPT},
+                    {"role": "user", "content": FEW_SHOT_EXAMPLES + "\n\nТеперь обработай:\n" + text[:4000]},
+                ],
+                "temperature": 0.1,
+                "max_tokens": 1000,
+                "response_format": {"type": "json_object"},
+            }, timeout=30)
+        r.raise_for_status()
+        return json.loads(r.json()["choices"][0]["message"]["content"])
+
+    def _fallback(self, text: str) -> list[dict]:
+        """Умный fallback: разбивает пост на блоки и парсит каждый."""
+        lower = text.lower()
+        if any(k in lower for k in ("опрос", "реклама", "партнёр", "подпишись")):
+            return []
+
+        MONTHS = {
+            'января':1,'февраля':2,'марта':3,'апреля':4,'мая':5,'июня':6,
+            'июля':7,'августа':8,'сентября':9,'октября':10,'ноября':11,'декабря':12,
+            'январь':1,'февраль':2,'март':3,'апрель':4,'май':5,'июнь':6,
+            'июль':7,'август':8,'сентябрь':9,'октябрь':10,'ноябрь':11,'декабрь':12
         }
-        try:
-            r = self.session.post(url, json=payload, timeout=120)
-            r.raise_for_status()
-            content = r.json()["message"]["content"]
-            return json.loads(content)
-        except Exception as e:
-            print(f"  ⚠ Ollama error: {e}")
-            return self._fallback_parse(text)
-    
-    def _fallback_parse(self, text: str) -> Optional[dict]:
-        """Простой парсер без ИИ — работает когда ИИ недоступен"""
-        import re
-        from datetime import datetime
-        
-        text_lower = text.lower()
-        
-        # Пропускаем явную рекламу/опросы
-        skip_keywords = ["опрос", "реклама", "партнёр", "подпишись"]
-        if any(k in text_lower for k in skip_keywords):
-            return {"skip": True}
-        
-        # Ищем дату
-        date = "уточняйте"
-        date_patterns = [
-            r'(\d{1,2})[.\s]+(января|февраля|марта|апреля|мая|июня|июля|августа|сентября|октября|ноября|декабря)(?:\s+(\d{4}))?',
-            r'(\d{1,2})[./-](\d{1,2})[./-](\d{2,4})',
-        ]
-        months = {'января':1,'февраля':2,'марта':3,'апреля':4,'мая':5,'июня':6,
-                  'июля':7,'августа':8,'сентября':9,'октября':10,'ноября':11,'декабря':12}
-        for p in date_patterns:
-            m = re.search(p, text, re.IGNORECASE)
+
+        today = datetime.now()
+
+        def parse_date(s: str) -> str | None:
+            """Возвращает YYYY-MM-DD или None."""
+            s = s.strip()
+
+            # Относительные даты
+            if "завтра" in s.lower():
+                return (today + timedelta(days=1)).strftime("%Y-%m-%d")
+            if "послезавтра" in s.lower():
+                return (today + timedelta(days=2)).strftime("%Y-%m-%d")
+            if "сегодня" in s.lower():
+                return today.strftime("%Y-%m-%d")
+
+            # DD.MM.YYYY или DD.MM.YY
+            m = re.match(r'(\d{1,2})\.(\d{1,2})\.(\d{2,4})', s)
             if m:
-                if m.group(2).lower() in months:
-                    day = int(m.group(1))
-                    mon = months[m.group(2).lower()]
-                    year = int(m.group(3)) if m.group(3) else datetime.now().year
-                    date = f"{year:04d}-{mon:02d}-{day:02d}"
-                else:
-                    date = f"{m.group(3)}-{m.group(2):>02}-{m.group(1):>02}"
-                break
-        
-        # Ищем цену
-        price_from = None
-        price_fixed = None
-        price_match = re.search(r'(?:от|с)\s+(\d[\d\s]*)\s*(?:руб|₽|р)', text, re.IGNORECASE)
-        if price_match:
-            price_from = int(re.sub(r'\D', '', price_match.group(1)))
-        else:
-            price_match = re.search(r'(\d[\d\s]*)\s*(?:руб|₽|р)(?:\w*\s*)?(?:билет|вход|стоим|цена)', text, re.IGNORECASE)
-            if price_match:
-                price_fixed = int(re.sub(r'\D', '', price_match.group(1)))
-        
-        # Ищем название (первая строка или после даты)
-        lines = [l.strip() for l in text.split('\n') if l.strip()]
-        name = lines[0][:100] if lines else "Мероприятие"
-        
-        return {
-            "name": name,
-            "date": date,
-            "price_from": price_from,
-            "price_fixed": price_fixed,
-            "description": text[:300],
-        }
+                d, mo, y = int(m.group(1)), int(m.group(2)), int(m.group(3))
+                if y < 100:
+                    y += 2000
+                try:
+                    return datetime(y, mo, d).strftime("%Y-%m-%d")
+                except ValueError:
+                    pass
+
+            # "29 сентября" / "29 сентября, Вторник"
+            m = re.match(r'(\d{1,2})\s+([а-яё]+)', s, re.I)
+            if m:
+                day = int(m.group(1))
+                mon_name = m.group(2).lower()
+                if mon_name in MONTHS:
+                    year = today.year
+                    # Если месяц уже прошёл в этом году — следующий год
+                    if MONTHS[mon_name] < today.month:
+                        year += 1
+                    try:
+                        return datetime(year, MONTHS[mon_name], day).strftime("%Y-%m-%d")
+                    except ValueError:
+                        pass
+            return None
+
+        def parse_time(s: str) -> str | None:
+            m = re.search(r'(\d{1,2})[:.](\d{2})', s)
+            if m:
+                return f"{int(m.group(1)):02d}:{m.group(2)}"
+            return None
+
+        def parse_price(s: str) -> tuple[int|None, int|None]:
+            """Возвращает (price_from, price_fixed)."""
+            # "600 р.с человека", "600р с игрока", "600 рублей с человека"
+            p = re.search(r'(\d[\d\s]*)\s*(?:р|руб|₽)[.\s]*(?:с\s*)?(?:человека|игрока|чел|перс|с\s+чел)', s, re.I)
+            if p:
+                return int(re.sub(r'\D', '', p.group(1))), None
+            # "от N руб"
+            p = re.search(r'от\s+(\d[\d\s]*)\s*(?:руб|₽|р)', s, re.I)
+            if p:
+                return int(re.sub(r'\D', '', p.group(1))), None
+            # "Стоимость: N рублей"
+            p = re.search(r'(?:стоимость|цена|вход|билет)[:\s]*(\d[\d\s]*)\s*(?:руб|₽|р)', s, re.I)
+            if p:
+                return None, int(re.sub(r'\D', '', p.group(1)))
+            return None, None
+
+        def extract_location(s: str) -> str | None:
+            # После 📍
+            m = re.search(r'📍\s*([^\n,|]+)', s)
+            if m:
+                return m.group(1).strip()
+            # "Место, время" — например "Планета, 19:00"
+            m = re.match(r'^([A-Za-zА-Яа-яёЁ0-9\s\'"·\-]+),\s*\d{1,2}[:.]\d{2}', s.strip())
+            if m:
+                loc = m.group(1).strip()
+                if len(loc) > 2 and not re.match(r'^\d+$', loc):
+                    return loc
+            return None
+
+        # Разбиваем пост на блоки по маркерам дат
+        # Маркеры: 👉, 🗓, 📅, или строки вида "DD месяца" / "DD.MM"
+        date_markers = re.compile(
+            r'(?m)^(?:[👉🗓📅🗓️]\s*)?'
+            r'(?:(\d{1,2})[.\s]+([а-яё]+|\d{1,2})|(\d{1,2})[.\-/](\d{1,2})[.\-/](\d{2,4})|завтра|послезавтра|сегодня)',
+            re.I
+        )
+
+        matches = list(date_markers.finditer(text))
+        if not matches:
+            return []
+
+        # Глобальная цена/описание — берём из всего текста
+        global_price_from, global_price_fixed = parse_price(text)
+        global_location = extract_location(text)
+
+        events = []
+        for i, m in enumerate(matches):
+            start = m.start()
+            end = matches[i + 1].start() if i + 1 < len(matches) else len(text)
+            block = text[start:end]
+            date_line = block.split('\n')[0]
+
+            date = parse_date(date_line)
+            if not date:
+                continue
+
+            time = parse_time(block)
+            location = None
+            # Ищем место в следующих строках блока
+            for line in block.split('\n')[1:4]:
+                loc = extract_location(line)
+                if loc:
+                    location = loc
+                    break
+            if not location:
+                location = global_location
+
+            price_from, price_fixed = parse_price(block)
+            if not price_from:
+                price_from = global_price_from
+            if not price_fixed:
+                price_fixed = global_price_fixed
+
+            # Название: строка с 💥, ✨, или просто длинная непустая строка после даты/места/времени
+            name = None
+            for line in block.split('\n'):
+                line = line.strip()
+                if not line:
+                    continue
+                # Пропускаем строки с датой, временем, эмодзи-маркерами метаинфы
+                if re.match(r'^(👉|🗓|📅|📍|💰|💵|👭|👥)', line):
+                    continue
+                if re.search(r'\d{1,2}[.:]\d{2}', line) and ',' in line:  # "Планета, 19:00"
+                    continue
+                if re.match(r'^\d{1,2}[.\s]', line):  # начинается с даты
+                    continue
+                # Убираем эмодзи-префиксы типа 💥, ✨
+                clean = re.sub(r'^[💥✨🎉🔥⭐️]+\s*', '', line).strip()
+                if len(clean) > 3 and not re.match(r'^(всем привет|привет|друзья)', clean, re.I):
+                    name = clean[:120]
+                    break
+            if not name:
+                name = "Мероприятие"
+
+            events.append({
+                "name": name,
+                "date": date,
+                "time": time,
+                "location": location,
+                "price_from": price_from,
+                "price_fixed": price_fixed,
+                "description": block[:300],
+            })
+
+        return events

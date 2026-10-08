@@ -1,19 +1,26 @@
 
 # Сколько последних постов парсить из каждого сообщества
-posts_per_group: 15
+posts_per_group: 10
 
 sources_dir: "sources"
 output_file: "events_output.json"
+
+ai_provider: "openrouter"
+ai_model: "google/gemini-2.0-flash-exp:free"
+
+# Эти значения переопределяются из .env, но можно оставить как дефолт
+#ai_provider: "qwen"
+#ai_model: "qwen-plus"
 
 
 # AI провайдер (бесплатные варианты)
 # - "groq"          → https://console.groq.com (Llama 3.1 8B/70B бесплатно)
 # - "openrouter"    → https://openrouter.ai (много бесплатных моделей)
 # - "ollama"        → http://localhost:11434 (локально)
-ai_provider: "groq"
+#ai_provider: "groq"
 
 # Модель для извлечения (примеры бесплатных):
 # Groq:         "llama-3.3-70b-versatile"
 # OpenRouter:   "google/gemini-2.0-flash-exp:free"
 # Ollama:       "llama3.1:8b"
-ai_model: "llama-3.3-70b-versatile"
+#ai_model: "llama-3.3-70b-versatile"

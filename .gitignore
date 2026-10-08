@@ -1,12 +1,19 @@
 # Секреты
 .env
-*.secret
+.env.local
+
+# Состояние и логи
+processed_posts.json
+logs/
+*.log
+
+# Virtual environment
+venv/
+.venv/
 
 # Python
 __pycache__/
 *.pyc
-venv/
-.venv/
 
 # Результаты
 events_output.json
