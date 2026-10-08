@@ -41,8 +41,11 @@ FEW_SHOT_EXAMPLES = """
   {"name": "Туц Туц", "date": "2026-10-01", "time": "19:00", "location": "Планета"},
   {"name": "Мозгобойня", "date": "2026-10-04", "time": "17:00", "location": "Chester Pub"}
 ]}
-"""
 
+Пример 3
+Ввод: 📍29 октября , ЧЕТВЕРГ\n📍Harat’s pub\n📍сбор в 19:00 , в 19.15 начинаем отвечать на вопросы\n\nРегистрируйтесь:\n📎в комментариях под этим постом.\nСтоимость участия - 600 р.с человека.
+Вывод: {"events": [{"name": "Квиз Эйнштейн Party | ХАНТЫ-МАНСИЙСК |", "date": "2026-09-29", "time": "19:00", "location": "Harat’s pub", "price_from": 600}]}
+"""
 
 class AIExtractor:
     def __init__(self, provider: str, api_key: str = "", model: str = ""):
