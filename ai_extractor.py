@@ -1,8 +1,11 @@
 import json
 import re
+import time
 import requests
 from typing import Optional
 from datetime import datetime, timedelta
+
+from logger_config import logger
 
 SYSTEM_PROMPT = """Ты — ассистент для извлечения информации о мероприятиях из постов VK.
 В одном посте может быть ОДНО или НЕСКОЛЬКО мероприятий (список игр).
@@ -38,11 +41,8 @@ FEW_SHOT_EXAMPLES = """
   {"name": "Туц Туц", "date": "2026-10-01", "time": "19:00", "location": "Планета"},
   {"name": "Мозгобойня", "date": "2026-10-04", "time": "17:00", "location": "Chester Pub"}
 ]}
-
-Пример 3
-Ввод: 📍29 октября , ЧЕТВЕРГ\n📍Harat’s pub\n📍сбор в 19:00 , в 19.15 начинаем отвечать на вопросы\n\nРегистрируйтесь:\n📎в комментариях под этим постом.\nСтоимость участия - 600 р.с человека.
-Вывод: {"events": [{"name": "Квиз Эйнштейн Party | ХАНТЫ-МАНСИЙСК |", "date": "2026-09-29", "time": "19:00", "location": "Harat’s pub", "price_from": 600}]}
 """
+
 
 class AIExtractor:
     def __init__(self, provider: str, api_key: str = "", model: str = ""):
@@ -50,13 +50,32 @@ class AIExtractor:
         self.api_key = api_key
         self.model = model
         self.session = requests.Session()
-
+        
+        # Статистика работы ИИ
+        self.stats = {
+            "total_calls": 0,
+            "successful_calls": 0,
+            "failed_calls": 0,
+            "fallback_calls": 0,
+            "total_time": 0.0,
+            "events_found_via_ai": 0,
+            "events_found_via_fallback": 0,
+        }
+    
     def extract(self, text: str) -> list[dict]:
-        """Возвращает список событий из поста (может быть 0, 1 или несколько)."""
+        """Возвращает список событий из поста."""
         if not text or len(text.strip()) < 20:
             return []
         text = re.sub(r'<[^>]+>', '', text)
-
+        
+        self.stats["total_calls"] += 1
+        start_time = time.time()
+        
+        # Логируем начало запроса
+        text_preview = text[:200].replace('\n', ' ').strip()
+        logger.debug(f"🤖 [{self.provider.upper()}] Отправляем запрос ({len(text)} символов)")
+        logger.debug(f"   Текст: {text_preview}...")
+        
         try:
             if self.provider == "groq":
                 result = self._call_groq(text)
@@ -66,14 +85,42 @@ class AIExtractor:
                 result = self._call_ollama(text)
             elif self.provider == "qwen":
                 result = self._call_qwen(text)
+            elif self.provider == "together":
+                result = self._call_together(text)
             else:
                 result = None
+            
+            elapsed = time.time() - start_time
+            self.stats["total_time"] += elapsed
+            
             if result and isinstance(result, dict):
-                return result.get("events", []) if "events" in result else ([result] if not result.get("skip") else [])
+                events = result.get("events", []) if "events" in result else ([result] if not result.get("skip") else [])
+                self.stats["successful_calls"] += 1
+                self.stats["events_found_via_ai"] += len(events)
+                
+                logger.info(f"✅ [{self.provider.upper()}] Ответ за {elapsed:.2f}s | Найдено событий: {len(events)}")
+                logger.debug(f"   JSON: {json.dumps(result, ensure_ascii=False)[:500]}")
+                
+                return events
+            else:
+                raise ValueError("Пустой или некорректный ответ от ИИ")
+                
         except Exception as e:
-            print(f"[AI] {self.provider} error: {e}")
-
-        return self._fallback(text)
+            elapsed = time.time() - start_time
+            self.stats["failed_calls"] += 1
+            self.stats["total_time"] += elapsed
+            
+            logger.warning(f"❌ [{self.provider.upper()}] Ошибка за {elapsed:.2f}s: {e}")
+            logger.info(f"⚠️  Переключаемся на fallback-парсер")
+            
+            fallback_events = self._fallback(text)
+            self.stats["fallback_calls"] += 1
+            self.stats["events_found_via_fallback"] += len(fallback_events)
+            
+            if fallback_events:
+                logger.info(f"🔄 Fallback нашёл событий: {len(fallback_events)}")
+            
+            return fallback_events
 
     def _call_groq(self, text: str) -> dict:
         r = self.session.post("https://api.groq.com/openai/v1/chat/completions",
@@ -121,7 +168,6 @@ class AIExtractor:
         return json.loads(r.json()["message"]["content"])
 
     def _call_qwen(self, text: str) -> dict:
-        """Qwen через DashScope API (Alibaba Cloud) — OpenAI-compatible."""
         r = self.session.post("https://dashscope.aliyuncs.com/compatible-mode/v1/chat/completions",
             headers={
                 "Authorization": f"Bearer {self.api_key}",
@@ -140,8 +186,29 @@ class AIExtractor:
         r.raise_for_status()
         return json.loads(r.json()["choices"][0]["message"]["content"])
 
+    def _call_together(self, text: str) -> dict:
+        r = self.session.post("https://api.together.xyz/v1/chat/completions",
+            headers={
+                "Authorization": f"Bearer {self.api_key}",
+                "Content-Type": "application/json",
+            },
+            json={
+                "model": self.model or "Qwen/Qwen2.5-72B-Instruct",
+                "messages": [
+                    {"role": "system", "content": SYSTEM_PROMPT},
+                    {"role": "user", "content": FEW_SHOT_EXAMPLES + "\n\nТеперь обработай:\n" + text[:4000]},
+                ],
+                "temperature": 0.1,
+                "max_tokens": 1000,
+                "response_format": {"type": "json_object"},
+            }, timeout=30)
+        r.raise_for_status()
+        return json.loads(r.json()["choices"][0]["message"]["content"])
+
     def _fallback(self, text: str) -> list[dict]:
-        """Умный fallback: разбивает пост на блоки и парсит каждый."""
+        """Умный fallback-парсер без ИИ."""
+        logger.debug("🔧 Запуск fallback-парсера (regex)")
+        
         lower = text.lower()
         if any(k in lower for k in ("опрос", "реклама", "партнёр", "подпишись")):
             return []
@@ -156,10 +223,7 @@ class AIExtractor:
         today = datetime.now()
 
         def parse_date(s: str) -> str | None:
-            """Возвращает YYYY-MM-DD или None."""
             s = s.strip()
-
-            # Относительные даты
             if "завтра" in s.lower():
                 return (today + timedelta(days=1)).strftime("%Y-%m-%d")
             if "послезавтра" in s.lower():
@@ -167,7 +231,6 @@ class AIExtractor:
             if "сегодня" in s.lower():
                 return today.strftime("%Y-%m-%d")
 
-            # DD.MM.YYYY или DD.MM.YY
             m = re.match(r'(\d{1,2})\.(\d{1,2})\.(\d{2,4})', s)
             if m:
                 d, mo, y = int(m.group(1)), int(m.group(2)), int(m.group(3))
@@ -178,14 +241,12 @@ class AIExtractor:
                 except ValueError:
                     pass
 
-            # "29 сентября" / "29 сентября, Вторник"
             m = re.match(r'(\d{1,2})\s+([а-яё]+)', s, re.I)
             if m:
                 day = int(m.group(1))
                 mon_name = m.group(2).lower()
                 if mon_name in MONTHS:
                     year = today.year
-                    # Если месяц уже прошёл в этом году — следующий год
                     if MONTHS[mon_name] < today.month:
                         year += 1
                     try:
@@ -201,27 +262,21 @@ class AIExtractor:
             return None
 
         def parse_price(s: str) -> tuple[int|None, int|None]:
-            """Возвращает (price_from, price_fixed)."""
-            # "600 р.с человека", "600р с игрока", "600 рублей с человека"
             p = re.search(r'(\d[\d\s]*)\s*(?:р|руб|₽)[.\s]*(?:с\s*)?(?:человека|игрока|чел|перс|с\s+чел)', s, re.I)
             if p:
                 return int(re.sub(r'\D', '', p.group(1))), None
-            # "от N руб"
             p = re.search(r'от\s+(\d[\d\s]*)\s*(?:руб|₽|р)', s, re.I)
             if p:
                 return int(re.sub(r'\D', '', p.group(1))), None
-            # "Стоимость: N рублей"
             p = re.search(r'(?:стоимость|цена|вход|билет)[:\s]*(\d[\d\s]*)\s*(?:руб|₽|р)', s, re.I)
             if p:
                 return None, int(re.sub(r'\D', '', p.group(1)))
             return None, None
 
         def extract_location(s: str) -> str | None:
-            # После 📍
             m = re.search(r'📍\s*([^\n,|]+)', s)
             if m:
                 return m.group(1).strip()
-            # "Место, время" — например "Планета, 19:00"
             m = re.match(r'^([A-Za-zА-Яа-яёЁ0-9\s\'"·\-]+),\s*\d{1,2}[:.]\d{2}', s.strip())
             if m:
                 loc = m.group(1).strip()
@@ -229,8 +284,6 @@ class AIExtractor:
                     return loc
             return None
 
-        # Разбиваем пост на блоки по маркерам дат
-        # Маркеры: 👉, 🗓, 📅, или строки вида "DD месяца" / "DD.MM"
         date_markers = re.compile(
             r'(?m)^(?:[👉🗓📅🗓️]\s*)?'
             r'(?:(\d{1,2})[.\s]+([а-яё]+|\d{1,2})|(\d{1,2})[.\-/](\d{1,2})[.\-/](\d{2,4})|завтра|послезавтра|сегодня)',
@@ -241,7 +294,6 @@ class AIExtractor:
         if not matches:
             return []
 
-        # Глобальная цена/описание — берём из всего текста
         global_price_from, global_price_fixed = parse_price(text)
         global_location = extract_location(text)
 
@@ -258,7 +310,6 @@ class AIExtractor:
 
             time = parse_time(block)
             location = None
-            # Ищем место в следующих строках блока
             for line in block.split('\n')[1:4]:
                 loc = extract_location(line)
                 if loc:
@@ -273,20 +324,17 @@ class AIExtractor:
             if not price_fixed:
                 price_fixed = global_price_fixed
 
-            # Название: строка с 💥, ✨, или просто длинная непустая строка после даты/места/времени
             name = None
             for line in block.split('\n'):
                 line = line.strip()
                 if not line:
                     continue
-                # Пропускаем строки с датой, временем, эмодзи-маркерами метаинфы
                 if re.match(r'^(👉|🗓|📅|📍|💰|💵|👭|👥)', line):
                     continue
-                if re.search(r'\d{1,2}[.:]\d{2}', line) and ',' in line:  # "Планета, 19:00"
+                if re.search(r'\d{1,2}[.:]\d{2}', line) and ',' in line:
                     continue
-                if re.match(r'^\d{1,2}[.\s]', line):  # начинается с даты
+                if re.match(r'^\d{1,2}[.\s]', line):
                     continue
-                # Убираем эмодзи-префиксы типа 💥, ✨
                 clean = re.sub(r'^[💥✨🎉🔥⭐️]+\s*', '', line).strip()
                 if len(clean) > 3 and not re.match(r'^(всем привет|привет|друзья)', clean, re.I):
                     name = clean[:120]
@@ -305,3 +353,13 @@ class AIExtractor:
             })
 
         return events
+
+    def get_stats_summary(self) -> dict:
+        """Возвращает сводку статистики."""
+        avg_time = self.stats["total_time"] / self.stats["total_calls"] if self.stats["total_calls"] > 0 else 0
+        return {
+            **self.stats,
+            "avg_response_time": round(avg_time, 2),
+            "provider": self.provider,
+            "model": self.model,
+        }

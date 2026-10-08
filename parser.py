@@ -160,6 +160,8 @@ class Parser(threading.Thread):
             self.state.errors += 1
             return
 
+        
+
         logger.info(f"  [{group_name}] Загрузка постов...")
         posts = fetch_posts(vk_url, self.vk_token, count=self.posts_per_group)
         self.state.total_posts += len(posts)
