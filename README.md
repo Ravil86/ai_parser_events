@@ -26,6 +26,20 @@ Harat's pub | https://vk.ru/harats_hanty
 Можно указывать несколько ссылок на группу (VK + сайт), парсится только VK-ссылка
 
 
+```bash
+# Настроить venv
+python3 -m venv venv
+source venv/bin/activate
+pip install -r requirements.txt
+```
+
+~~~bash
+# Запуск проекта
+source venv/bin/activate
+python main.py
+~~~
+
+
 # Как правильно "сворачивать" и "разворачивать" процесс
 
 ###### Вариант А: Штатные средства терминала (Ctrl+Z)
