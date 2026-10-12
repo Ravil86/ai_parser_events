@@ -1,6 +1,6 @@
 
 # Сколько последних постов парсить из каждого сообщества
-posts_per_group: 10
+posts_per_group: 15
 
 sources_dir: "sources"
 output_file: "events_output.json"

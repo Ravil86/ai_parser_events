@@ -1,32 +1,33 @@
-from dataclasses import dataclass, field, asdict
+from dataclasses import dataclass, asdict
 from typing import Optional
+from datetime import datetime
 
 @dataclass
 class Event:
-    """Модель мероприятия"""
     name: str
     category: str
     group_name: str
-    date: str  # YYYY-MM-DD или "уточняйте"
+    date: str
+    time: Optional[str] = None
+    location: Optional[str] = None
     photo_url: Optional[str] = None
     price_from: Optional[int] = None
     price_fixed: Optional[int] = None
     description: str = ""
     source_url: str = ""
+    found_at: str = ""
+    
+    def __post_init__(self):
+        if not self.found_at:
+            self.found_at = datetime.now().strftime("%Y-%m-%d %H:%M")
     
     def to_dict(self) -> dict:
-        d = asdict(self)
-        return {k: v for k, v in d.items() if v not in (None, "")}
+        return {k: v for k, v in asdict(self).items() if v not in (None, "")}
     
-    def __str__(self):
-        price = ""
+    @property
+    def price_str(self) -> str:
         if self.price_fixed:
-            price = f"💰 {self.price_fixed}₽"
-        elif self.price_from:
-            price = f"💰 от {self.price_from}₽"
-        return (
-            f"[{self.category}] {self.name}\n"
-            f"  📅 {self.date}  {price}\n"
-            f"  🖼  {self.photo_url or '—'}\n"
-            f"  🔗 {self.source_url}"
-        )
+            return f"{self.price_fixed}₽"
+        if self.price_from:
+            return f"от {self.price_from}₽"
+        return "—"

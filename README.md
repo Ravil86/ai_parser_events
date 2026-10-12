@@ -86,3 +86,28 @@ python main.py --status
 Проверка, как идут дела: python main.py --status
 Чтение подробных логов: tail -f logs/parser.log
 Остановка: pkill -f "main.py"
+
+
+Если хотите, чтобы команда python работала везде (а не только в venv), создайте символическую ссылку:
+# Создаём симлинк (требует root)
+~~~bash
+ln -sf /usr/bin/python3 /usr/local/bin/python
+ln -sf /usr/bin/pip3 /usr/local/bin/pip
+~~~
+
+# Проверяем
+~~~bash
+python --version
+~~~
+
+Или добавьте alias в ~/.bashrc (безопаснее, не ломает систему):
+~~~bash
+echo "alias python='python3'" >> ~/.bashrc
+echo "alias pip='pip3'" >> ~/.bashrc
+source ~/.bashrc
+~~~
+
+# Теперь работает:
+~~~bash
+python --version
+~~~

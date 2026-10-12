@@ -6,7 +6,6 @@ from datetime import datetime
 VK_API = "https://api.vk.com/method"
 VK_VERSION = "5.199"
 
-
 def extract_group_id(url: str, token: str) -> Optional[str]:
     if "vk." not in url:
         return None
@@ -37,7 +36,6 @@ def extract_group_id(url: str, token: str) -> Optional[str]:
         print(f"[VK] resolve error {screen_name}: {e}")
     return None
 
-
 def fetch_posts(group_url: str, token: str, count: int = 15) -> list[dict]:
     gid = extract_group_id(group_url, token)
     if not gid:
@@ -52,7 +50,6 @@ def fetch_posts(group_url: str, token: str, count: int = 15) -> list[dict]:
     except Exception as e:
         print(f"[VK] fetch error {group_url}: {e}")
         return []
-
 
 def extract_post_content(post: dict) -> dict:
     text = post.get("text", "")
@@ -70,7 +67,6 @@ def extract_post_content(post: dict) -> dict:
         "post_url": f"https://vk.ru/wall{post.get('from_id', '')}_{post.get('id', '')}",
         "date_ts": post.get("date", 0),
     }
-
 
 def post_date_str(post: dict) -> str:
     ts = post.get("date", 0)
