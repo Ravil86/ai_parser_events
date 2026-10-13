@@ -1,6 +1,10 @@
 from dataclasses import dataclass, asdict
 from typing import Optional
-from datetime import datetime
+from datetime import datetime, timezone, timedelta
+
+# Часовой пояс Екатеринбург (UTC+5) — НЕ зависит от часового пояса сервера
+YEKATERINBURG_TZ = timezone(timedelta(hours=5))
+
 
 @dataclass
 class Event:
@@ -19,7 +23,8 @@ class Event:
     
     def __post_init__(self):
         if not self.found_at:
-            self.found_at = datetime.now().strftime("%Y-%m-%d %H:%M")
+            # Время находки всегда в часовом поясе Екатеринбурга, независимо от сервера
+            self.found_at = datetime.now(YEKATERINBURG_TZ).strftime("%Y-%m-%d %H:%M:%S %Z")
     
     def to_dict(self) -> dict:
         return {k: v for k, v in asdict(self).items() if v not in (None, "")}

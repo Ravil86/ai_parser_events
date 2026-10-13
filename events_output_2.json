@@ -1,0 +1,41 @@
+{
+  "events": [
+    {
+      "name": "«Отцы и Дети» на Дне отца",
+      "category": "Госорганизации",
+      "group_name": "СК Дружба",
+      "date": "2026-10-18",
+      "time": "11:00",
+      "location": "СК «Дружба», ул. Георгия Величко, 3",
+      "photo_url": "https://sun9-84.userapi.com/s/v1/ig2/cUYU1c_sC-e0yMkXVzxqTZFgr6iIZgZRJI1a8_3N2JRqi_7WIDBerolJk5XNhoMJR4vEQC78gEw9JhYqEQYPgeil.jpg?quality=95&as=32x48,48x72,72x108,108x162,160x240,240x360,360x540,480x720,540x810,640x960,720x1080,1024x1536&from=bu&cs=1024x0",
+      "description": "Семейные подвижные игры в рамках праздничной спортивной программы ВФСК «ГТО», посвящённой Дню отца. Ведущий — Вадим Белоногов.",
+      "source_url": "https://vk.ru/wall-173859472_7469",
+      "found_at": "2026-10-13 05:09"
+    },
+    {
+      "name": "Чемпионат и первенство Югры по пауэрлифтингу",
+      "category": "Госорганизации",
+      "group_name": "ЮграМегаСпорт",
+      "date": "2026-10-15",
+      "location": "УСК-1",
+      "photo_url": "https://sun9-68.userapi.com/s/v1/ig2/CD7tJH8lWcLSS_1oJmoOfaYnnpa7_E3vJGtzZDEpLENFcWh1kB8zQ1bI7sR6OcK_qJ3rL42tFDzzUX_ADRa_upSp.jpg?quality=95&as=32x21,48x32,72x48,108x72,160x107,240x160,360x240,480x320,540x360,640x427,720x480,1080x720,1280x853,1440x960,2560x1707&from=bu&cs=2560x0",
+      "description": "Чемпионат и первенство Югры по пауэрлифтингу с участием сильнейших атлетов. Ожидается борьба на помосте и предельные веса.",
+      "source_url": "https://vk.ru/wall-35493138_42533",
+      "found_at": "2026-10-13 05:10"
+    },
+    {
+      "name": "Первенство Югры по самбо среди юношей и девушек 16-18 лет",
+      "category": "Госорганизации",
+      "group_name": "ЮграМегаСпорт",
+      "date": "2026-10-10",
+      "time": "10:00",
+      "location": "УСК-1",
+      "photo_url": "https://sun9-50.userapi.com/s/v1/ig2/knIEoaYV7OhYq8oCjWPkCfE6ZGhjqEcCEypiZiYSINy2TmMi6LKG7L3PbI8sdDJyrxMEoHYHGEZIKTiw4QZmf17zf4iACQ.jpg?quality=95&as=32x21,48x32,72x48,108x72,160x107,240x160,360x241,480x321,540x361,640x428,720x481,1080x722,1280x856,1440x963,1920x1284&from=bu&cs=1920x0",
+      "price_from": 0,
+      "description": "Финальные схватки и подведение итогов первенства. Вход свободный.",
+      "source_url": "https://vk.ru/wall-35493138_42514",
+      "found_at": "2026-10-13 05:11"
+    }
+  ],
+  "total": 3
+}

@@ -1,6 +1,11 @@
+parser.pid
+
 # Секреты
 .env
 .env.local
+
+# Промпты (опционально, если не хотите коммитить)
+#prompts/
 
 # Состояние и логи
 processed_posts.json
@@ -17,3 +22,5 @@ __pycache__/
 
 # Результаты
 events_output.json
+
+stats.json

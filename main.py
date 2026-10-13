@@ -35,8 +35,28 @@ def load_config(path: str = "config.yaml") -> dict:
         sys.exit(1)
     with open(p, "r", encoding="utf-8") as f:
         cfg = yaml.safe_load(f) or {}
-    for cfg_key, env_key in {"vk_token": "VK_TOKEN", "ai_api_key": "AI_API_KEY", "ai_provider": "AI_PROVIDER", "ai_model": "AI_MODEL"}.items():
-        if os.getenv(env_key): cfg[cfg_key] = os.getenv(env_key)
+        
+    env_overrides = {
+        "vk_token": "VK_TOKEN",
+        "ai_api_key": "AI_API_KEY",
+        "ai_provider": "AI_PROVIDER",
+        "ai_model": "AI_MODEL",
+        "ai_delay_between_requests": "AI_DELAY_BETWEEN_REQUESTS",
+        "ai_max_retries": "AI_MAX_RETRIES",
+        "ai_retry_base_delay": "AI_RETRY_BASE_DELAY",
+        "vk_delay_between_groups": "VK_DELAY_BETWEEN_GROUPS",
+        # FALLBACK провайдер
+        "fallback_ai_provider": "FALLBACK_AI_PROVIDER",
+        "fallback_ai_api_key": "FALLBACK_AI_API_KEY",
+        "fallback_ai_model": "FALLBACK_AI_MODEL",
+    }
+    for cfg_key, env_key in env_overrides.items():
+        env_val = os.getenv(env_key)
+        if env_val:
+            try:
+                cfg[cfg_key] = float(env_val)
+            except ValueError:
+                cfg[cfg_key] = env_val
     return cfg
 
 def show_status(config: dict):
@@ -49,8 +69,26 @@ def show_status(config: dict):
     console = Console()
     console.print("[bold cyan]📊 Статус VK Events Agent[/]\n")
     
-    result = subprocess.run(['pgrep', '-f', 'main.py'], capture_output=True, text=True)
-    pids = [p for p in result.stdout.strip().split('\n') if p]
+    # Читаем PID из файла (надёжнее, чем pgrep)
+    pids = []
+    if os.path.exists("parser.pid"):
+        try:
+            with open("parser.pid", "r") as f:
+                pid = f.read().strip()
+            # Проверяем, жив ли процесс
+            os.kill(int(pid), 0)
+            pids = [pid]
+        except (ProcessLookupError, ValueError, PermissionError):
+            pids = []
+    
+    # Fallback на pgrep, если pid-файла нет
+    if not pids:
+        result = subprocess.run(['pgrep', '-f', 'main.py'], capture_output=True, text=True)
+        pids = [p for p in result.stdout.strip().split('\n') if p]
+        
+    #result = subprocess.run(['pgrep', '-f', 'main.py'], capture_output=True, text=True)
+    #pids = [p for p in result.stdout.strip().split('\n') if p]
+    
     console.print(f"[bold green]✅ Процесс запущен (PID: {', '.join(pids)})[/]\n" if pids else "[bold yellow]⚠️ Процесс не запущен[/]\n")
 
     layout = Layout()
@@ -72,6 +110,16 @@ def show_status(config: dict):
             ai_table.add_row("Среднее время ответа:", f"{ai_stats.get('avg_response_time', 0):.2f}s")
     except (FileNotFoundError, json.JSONDecodeError):
         ai_table.add_row("Статистика ИИ:", "Нет данных (запустите агент)")
+        
+        # Информация о fallback провайдере
+        if ai_stats.get("fallback_provider"):
+            ai_table.add_row("Fallback провайдер:", f"[cyan]{ai_stats.get('fallback_provider', '').upper()}[/]")
+            fb_stats = ai_stats.get("fallback_stats", {})
+            if fb_stats:
+                ai_table.add_row("Вызовов через fallback:", f"[cyan]{fb_stats.get('total_calls', 0)}[/]")
+                ai_table.add_row("Успешных через fallback:", f"[green]{fb_stats.get('successful_calls', 0)}[/]")
+        ai_table.add_row("Переключений на fallback:", f"[yellow]{ai_stats.get('switched_to_fallback_provider', 0)}[/]")
+        
     layout["ai_stats"].update(Panel(ai_table, title="🤖 Статистика работы ИИ", border_style="magenta"))
 
     parse_table = Table.grid(expand=True, padding=(0, 2))
@@ -115,12 +163,27 @@ def show_status(config: dict):
     console.print("\n[dim]💡 Команды: Ctrl+Z → bg (свернуть), fg (развернуть), tail -f logs/parser.log (логи)[/]\n")
 
 def run_daemon_mode(config: dict):
-    print("🚀 Запуск в фоновом режиме. Логи: logs/parser.log")
-    logger.info("Агент запущен в фоновом режиме (daemon)")
+    from daemon import daemonize
+    
+    # === УХОДИМ В ФОН (терминал освобождается мгновенно) ===
+    daemonize()
+    
+    # === ВАЖНО: после fork пересоздаём хендлеры логгера ===
+    # (это обновит файловые дескрипторы под новый процесс)
+    import logger_config
+    logger = logger_config.setup_logger()
+    
+    logger.info("=" * 60)
+    logger.info("🚀 ЗАПУСК АГЕНТА (Фоновый режим / daemon)")
+    logger.info("=" * 60)
+    
     state = ParseState()
     parser = Parser(config, state)
     parser.run()
-    print(f"✅ Завершено. Найдено событий: {state.events_found}")
+    
+    logger.info("=" * 60)
+    logger.info(f"✅ РАБОТА ЗАВЕРШЕНА | Найдено событий: {state.events_found}")
+    logger.info("=" * 60)
 
 def run_ui_mode(config: dict):
     print("Нажмите ENTER для запуска...")
@@ -155,6 +218,20 @@ def main():
     if args.status:
         show_status(config)
         return
+
+    # === ДИАГНОСТИКА FALLBACK ===
+    fb_provider = config.get("fallback_ai_provider", "")
+    fb_api_key = config.get("fallback_ai_api_key", "") or os.getenv("FALLBACK_AI_API_KEY", "")
+    fb_model = config.get("fallback_ai_model", "")
+    
+    if fb_provider and fb_api_key:
+        print(f"✅ Fallback AI настроен: {fb_provider.upper()} ({fb_model})")
+    else:
+        print("⚠️  Fallback AI НЕ настроен! Добавьте в .env:")
+        print("    FALLBACK_AI_PROVIDER=openrouter")
+        print("    FALLBACK_AI_API_KEY=sk-or-v1-...")
+        print("    FALLBACK_AI_MODEL=qwen/qwen-2.5-72b-instruct")    
+
     if not config.get("vk_token"):
         print("⚠ ВНИМАНИЕ: VK_TOKEN не задан в .env")
         logger.warning("VK_TOKEN не задан")

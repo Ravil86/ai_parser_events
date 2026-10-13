@@ -1,0 +1,30 @@
+{
+  "events": [
+    {
+      "name": "Музыкальная мафия",
+      "category": "Квизы",
+      "group_name": "Угадай мелодию",
+      "date": "2026-10-13",
+      "time": "19:00",
+      "location": "STING",
+      "photo_url": "https://sun9-70.userapi.com/s/v1/ig2/4ahceIFjRsGJ0ERHLCweMuVxOoZeIhxfg9KuGzo8Oac3n_zaRs6qSHZmdV7mu5i59ZDVCz0TKpn_p5kmnI6XIgLT.jpg?quality=95&as=32x32,48x48,72x72,108x108,160x160,240x239,360x359,480x479,540x539,640x638,720x718,858x856&from=bu&cs=858x0",
+      "description": "Игра «Музыкальная мафия» для команд. Регистрация через ссылку.",
+      "source_url": "https://vk.ru/wall-192432667_4514",
+      "found_at": "2026-10-12 19:01"
+    },
+    {
+      "name": "Концерт акустического кавер-дуэта ONE DAY",
+      "category": "Развлечения",
+      "group_name": "Harat's pub",
+      "date": "2026-10-17",
+      "time": "20:00",
+      "location": "Ханты-Мансийск, ул. Мира 52",
+      "photo_url": "https://sun9-49.userapi.com/s/v1/ig2/9cNvouAGLfxUW50aohCcvcWymjzTTppbnHIe7B8NDUHPa9vJQBwPX_HF4EC6B-gwZmwLyWI1EObRjUYMCJZUZoOR.jpg?quality=95&as=32x32,48x48,72x72,108x108,160x160,240x240,360x360,480x480,540x540,640x640,720x720,1080x1080,1280x1280&from=bu&cs=1280x0",
+      "price_from": 400,
+      "description": "Выступление солистки Елены Наумочкиной и гитариста Алексея Нацаева. Акустический кавер-концерт.",
+      "source_url": "https://vk.ru/wall-162939366_1901",
+      "found_at": "2026-10-12 19:01"
+    }
+  ],
+  "total": 2
+}

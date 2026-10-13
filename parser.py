@@ -1,10 +1,11 @@
 import os
 import json
+import time
 import threading
 from pathlib import Path
 from dataclasses import dataclass, field
 from datetime import datetime
-from models import Event
+from models import Event, YEKATERINBURG_TZ
 from vk_client import fetch_posts, extract_post_content, post_date_str
 from ai_extractor import AIExtractor
 from logger_config import logger
@@ -32,12 +33,28 @@ class Parser(threading.Thread):
         self.stop_event = threading.Event()
         self.events: list[Event] = []
         self.vk_token = config.get("vk_token") or os.getenv("VK_TOKEN", "")
-        self.ai = AIExtractor(config.get("ai_provider", "fallback"), config.get("ai_api_key") or os.getenv("AI_API_KEY", ""), config.get("ai_model", ""))
+        ai_key = config.get("ai_api_key") or os.getenv("AI_API_KEY", "")
+        ai_proxy = os.getenv("AI_PROXY", "")
+        
+         # Передаём config в AIExtractor для доступа к настройкам пауз
+        self.ai = AIExtractor(
+            config.get("ai_provider", "fallback"),
+            ai_key,
+            config.get("ai_model", ""),
+            proxy=ai_proxy,
+            config=config  # ← Передаём конфиг
+        )
+        
+        #self.ai = AIExtractor(config.get("ai_provider", "fallback"), config.get("ai_api_key") or os.getenv("AI_API_KEY", ""), config.get("ai_model", ""))
         self.sources_dir = Path(config.get("sources_dir", "sources"))
         self.output_file = config.get("output_file", "events_output.json")
         self.posts_per_group = config.get("posts_per_group", 15)
         self.state_file = "processed_posts.json"
         self.processed_posts = self._load_state()
+        self._first_save_done = False  # Флаг для архивации старого файла
+        
+         # Настройки пауз
+        self.vk_delay_between_groups = float(config.get("vk_delay_between_groups", 2))
 
     def _load_state(self) -> dict:
         if os.path.exists(self.state_file):
@@ -97,6 +114,11 @@ class Parser(threading.Thread):
                 self.state.done_groups += 1
                 self._save_state()
                 
+                # Пауза между группами для снижения нагрузки на VK API
+                if self.vk_delay_between_groups > 0 and not self._check_pause_stop():
+                    logger.debug(f"⏸️  Пауза {self.vk_delay_between_groups}s между группами...")
+                    time.sleep(self.vk_delay_between_groups)
+                
         if not self.stop_event.is_set():
             self.state.status = "done"
             logger.info("=== Парсинг завершён ===")
@@ -151,6 +173,10 @@ class Parser(threading.Thread):
                 self.state.events_found += 1
                 self.state.last_events.append(event)
                 if len(self.state.last_events) > 10: self.state.last_events.pop(0)
+                
+                # ⚡ НОВОЕ: Сохраняем в файл СРАЗУ после нахождения события
+                self._save()
+                
                 logger.info(f"    + Найдено: '{event.name}' ({event.date} {event.time or ''})")
                 processed_count += 1
 
@@ -164,7 +190,46 @@ class Parser(threading.Thread):
             logger.info(f"  [{group_name}] Новых событий не найдено.")
 
     def _save(self):
+        """Сохраняет текущие события в events_output.json.
+        При первом сохранении за сессию архивирует старый файл в output/ с датой создания."""
+        output_path = Path(self.output_file)
+        
+        # При первом сохранении за сессию — архивируем старый файл
+        if not self._first_save_done:
+            self._first_save_done = True
+            if output_path.exists() and output_path.stat().st_size > 0:
+                # Дата создания файла в часовом поясе Екатеринбурга
+                mtime = datetime.fromtimestamp(output_path.stat().st_mtime, YEKATERINBURG_TZ)
+                archive_name = mtime.strftime("%Y-%m-%d_%H-%M-%S") + ".json"
+                archive_dir = Path("output")
+                archive_dir.mkdir(exist_ok=True)
+                archive_path = archive_dir / archive_name
+                
+                # Если файл с таким именем уже есть — добавляем счётчик
+                counter = 1
+                original_archive = archive_path
+                while archive_path.exists():
+                    archive_path = original_archive.with_name(
+                        f"{original_archive.stem}_{counter}.json"
+                    )
+                    counter += 1
+                
+                try:
+                    output_path.rename(archive_path)
+                    logger.info(f"📦 Предыдущий результат архивирован: {archive_path}")
+                except Exception as e:
+                    logger.error(f"Ошибка архивации старого файла: {e}")
+        
+        # Записываем текущий результат в events_output.json
+        data = {"events": [e.to_dict() for e in self.events], "total": len(self.events)}
         try:
-            with open(self.output_file, "w", encoding="utf-8") as f: json.dump({"events": [e.to_dict() for e in self.events], "total": len(self.events)}, f, ensure_ascii=False, indent=2)
-            logger.info(f"Результаты сохранены в {self.output_file}")
-        except Exception as e: logger.error(f"Ошибка сохранения: {e}")
+            with open(output_path, "w", encoding="utf-8") as f:
+                json.dump(data, f, ensure_ascii=False, indent=2)
+        except Exception as e:
+            logger.error(f"Ошибка сохранения результатов: {e}")
+            
+#    def _save(self):
+#        try:
+#            with open(self.output_file, "w", encoding="utf-8") as f: json.dump({"events": [e.to_dict() for e in self.events], "total": len(self.events)}, f, ensure_ascii=False, indent=2)
+#            logger.info(f"Результаты сохранены в {self.output_file}")
+#        except Exception as e: logger.error(f"Ошибка сохранения: {e}")
